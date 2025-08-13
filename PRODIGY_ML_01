@@ -1,492 +1,302 @@
-import React, { useState, useEffect } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ScatterChart, Scatter } from 'recharts';
-import { Upload, Play, BarChart3, Home, Calculator } from 'lucide-react';
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+import warnings
+warnings.filterwarnings('ignore')
 
-const HousePricePredictor = () => {
-  const [data, setData] = useState([]);
-  const [model, setModel] = useState(null);
-  const [predictions, setPredictions] = useState([]);
-  const [metrics, setMetrics] = useState(null);
-  const [prediction, setPrediction] = useState(null);
-  const [inputFeatures, setInputFeatures] = useState({
-    sqft: 2000,
-    bedrooms: 3,
-    bathrooms: 2
-  });
+# Set style for better plots
+plt.style.use('seaborn-v0_8')
+sns.set_palette("husl")
 
-  // Sample data generation (simulating Kaggle dataset structure)
-  const generateSampleData = () => {
-    const sampleData = [];
-    for (let i = 0; i < 200; i++) {
-      const sqft = 800 + Math.random() * 2700; // 800-3500 sqft
-      const bedrooms = Math.floor(1 + Math.random() * 5); // 1-5 bedrooms
-      const bathrooms = Math.floor(1 + Math.random() * 4); // 1-4 bathrooms
-      
-      // Price calculation with some noise (realistic relationship)
-      const basePrice = 50000 + (sqft * 80) + (bedrooms * 15000) + (bathrooms * 20000);
-      const noise = (Math.random() - 0.5) * 40000;
-      const price = Math.max(basePrice + noise, 50000);
-      
-      sampleData.push({
-        id: i + 1,
-        sqft: Math.round(sqft),
-        bedrooms,
-        bathrooms,
-        price: Math.round(price)
-      });
-    }
-    return sampleData;
-  };
-
-  // Linear Regression Implementation
-  class LinearRegression {
-    constructor() {
-      this.weights = null;
-      this.bias = null;
-    }
-
-    fit(X, y) {
-      const n = X.length;
-      const features = X[0].length;
-      
-      // Add bias column (intercept)
-      const XWithBias = X.map(row => [1, ...row]);
-      
-      // Normal equation: θ = (X^T * X)^(-1) * X^T * y
-      const XT = this.transpose(XWithBias);
-      const XTX = this.multiply(XT, XWithBias);
-      const XTXInv = this.inverse(XTX);
-      const XTy = this.multiplyVector(XT, y);
-      const theta = this.multiplyVector(XTXInv, XTy);
-      
-      this.bias = theta[0];
-      this.weights = theta.slice(1);
-    }
-
-    predict(X) {
-      if (!this.weights) return null;
-      
-      return X.map(row => {
-        let prediction = this.bias;
-        for (let i = 0; i < row.length; i++) {
-          prediction += this.weights[i] * row[i];
-        }
-        return prediction;
-      });
-    }
-
-    // Matrix operations
-    transpose(matrix) {
-      return matrix[0].map((col, i) => matrix.map(row => row[i]));
-    }
-
-    multiply(A, B) {
-      const result = Array(A.length).fill().map(() => Array(B[0].length).fill(0));
-      
-      for (let i = 0; i < A.length; i++) {
-        for (let j = 0; j < B[0].length; j++) {
-          for (let k = 0; k < A[0].length; k++) {
-            result[i][j] += A[i][k] * B[k][j];
-          }
-        }
-      }
-      return result;
-    }
-
-    multiplyVector(matrix, vector) {
-      return matrix.map(row => 
-        row.reduce((sum, val, i) => sum + val * vector[i], 0)
-      );
-    }
-
-    inverse(matrix) {
-      const n = matrix.length;
-      const identity = Array(n).fill().map((_, i) => 
-        Array(n).fill().map((_, j) => i === j ? 1 : 0)
-      );
-      
-      // Gaussian elimination
-      const augmented = matrix.map((row, i) => [...row, ...identity[i]]);
-      
-      for (let i = 0; i < n; i++) {
-        // Find pivot
-        let maxRow = i;
-        for (let k = i + 1; k < n; k++) {
-          if (Math.abs(augmented[k][i]) > Math.abs(augmented[maxRow][i])) {
-            maxRow = k;
-          }
-        }
+class HousePricePredictor:
+    def _init_(self):
+        self.model = LinearRegression()
+        self.is_trained = False
+        self.feature_names = ['sqft', 'bedrooms', 'bathrooms']
         
-        // Swap rows
-        [augmented[i], augmented[maxRow]] = [augmented[maxRow], augmented[i]];
+    def generate_synthetic_data(self, n_samples=1000):
+        """Generate synthetic house data with realistic relationships"""
+        np.random.seed(42)  # For reproducibility
         
-        // Make diagonal 1
-        const pivot = augmented[i][i];
-        for (let j = 0; j < 2 * n; j++) {
-          augmented[i][j] /= pivot;
-        }
+        # Generate features
+        sqft = np.random.normal(2000, 600, n_samples)
+        sqft = np.clip(sqft, 800, 5000)  # Realistic range
         
-        // Eliminate column
-        for (let k = 0; k < n; k++) {
-          if (k !== i) {
-            const factor = augmented[k][i];
-            for (let j = 0; j < 2 * n; j++) {
-              augmented[k][j] -= factor * augmented[i][j];
-            }
-          }
+        bedrooms = np.random.choice([2, 3, 4, 5], n_samples, p=[0.2, 0.4, 0.3, 0.1])
+        bathrooms = np.random.choice([1, 2, 3, 4], n_samples, p=[0.1, 0.5, 0.3, 0.1])
+        
+        # Generate prices with realistic relationships + noise
+        base_price = (
+            sqft * 150 +                    # $150 per sqft
+            bedrooms * 20000 +              # $20k per bedroom
+            bathrooms * 15000 +             # $15k per bathroom
+            50000                           # Base price
+        )
+        
+        # Add noise (±20% variation)
+        noise = np.random.normal(0, base_price * 0.1, n_samples)
+        prices = base_price + noise
+        prices = np.clip(prices, 100000, 2000000)  # Realistic price range
+        
+        # Create DataFrame
+        data = pd.DataFrame({
+            'sqft': sqft.astype(int),
+            'bedrooms': bedrooms,
+            'bathrooms': bathrooms,
+            'price': prices.astype(int)
+        })
+        
+        return data
+    
+    def train_model(self, data):
+        """Train the linear regression model"""
+        X = data[self.feature_names]
+        y = data['price']
+        
+        # Split data
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+        
+        # Train model
+        self.model.fit(self.X_train, self.y_train)
+        self.is_trained = True
+        
+        # Store training data for analysis
+        self.train_data = data
+        
+        print("Model trained successfully!")
+        print(f"Training samples: {len(self.X_train)}")
+        print(f"Test samples: {len(self.X_test)}")
+    
+    def evaluate_model(self):
+        """Evaluate model performance"""
+        if not self.is_trained:
+            print("Model not trained yet!")
+            return
+        
+        # Predictions
+        train_pred = self.model.predict(self.X_train)
+        test_pred = self.model.predict(self.X_test)
+        
+        # Metrics
+        train_r2 = r2_score(self.y_train, train_pred)
+        test_r2 = r2_score(self.y_test, test_pred)
+        train_rmse = np.sqrt(mean_squared_error(self.y_train, train_pred))
+        test_rmse = np.sqrt(mean_squared_error(self.y_test, test_pred))
+        train_mae = mean_absolute_error(self.y_train, train_pred)
+        test_mae = mean_absolute_error(self.y_test, test_pred)
+        
+        print("\n" + "="*50)
+        print("MODEL EVALUATION RESULTS")
+        print("="*50)
+        print(f"Training R²: {train_r2:.4f}")
+        print(f"Test R²: {test_r2:.4f}")
+        print(f"Training RMSE: ${train_rmse:,.0f}")
+        print(f"Test RMSE: ${test_rmse:,.0f}")
+        print(f"Training MAE: ${train_mae:,.0f}")
+        print(f"Test MAE: ${test_mae:,.0f}")
+        
+        # Model coefficients
+        print("\nMODEL COEFFICIENTS:")
+        print(f"Intercept: ${self.model.intercept_:,.0f}")
+        for feature, coef in zip(self.feature_names, self.model.coef_):
+            print(f"{feature.capitalize()}: ${coef:,.0f}")
+        
+        return {
+            'train_r2': train_r2, 'test_r2': test_r2,
+            'train_rmse': train_rmse, 'test_rmse': test_rmse,
+            'train_mae': train_mae, 'test_mae': test_mae
         }
-      }
-      
-      return augmented.map(row => row.slice(n));
-    }
-  }
+    
+    def predict_price(self, sqft, bedrooms, bathrooms):
+        """Predict price for a single house"""
+        if not self.is_trained:
+            print("Model not trained yet!")
+            return None
+        
+        features = np.array([[sqft, bedrooms, bathrooms]])
+        predicted_price = self.model.predict(features)[0]
+        
+        print(f"\nPREDICTION:")
+        print(f"House: {sqft} sqft, {bedrooms} bed, {bathrooms} bath")
+        print(f"Predicted Price: ${predicted_price:,.0f}")
+        
+        return predicted_price
+    
+    def plot_results(self):
+        """Create comprehensive visualizations"""
+        if not self.is_trained:
+            print("Model not trained yet!")
+            return
+        
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('House Price Prediction Model Analysis', fontsize=16, fontweight='bold')
+        
+        # 1. Actual vs Predicted
+        test_pred = self.model.predict(self.X_test)
+        axes[0, 0].scatter(self.y_test, test_pred, alpha=0.6, color='blue')
+        axes[0, 0].plot([self.y_test.min(), self.y_test.max()], 
+                       [self.y_test.min(), self.y_test.max()], 'r--', lw=2)
+        axes[0, 0].set_xlabel('Actual Price')
+        axes[0, 0].set_ylabel('Predicted Price')
+        axes[0, 0].set_title('Actual vs Predicted Prices')
+        axes[0, 0].ticklabel_format(style='plain', axis='both')
+        
+        # 2. Residuals plot
+        residuals = self.y_test - test_pred
+        axes[0, 1].scatter(test_pred, residuals, alpha=0.6, color='green')
+        axes[0, 1].axhline(y=0, color='r', linestyle='--')
+        axes[0, 1].set_xlabel('Predicted Price')
+        axes[0, 1].set_ylabel('Residuals')
+        axes[0, 1].set_title('Residuals Plot')
+        axes[0, 1].ticklabel_format(style='plain', axis='both')
+        
+        # 3. Feature importance (coefficients)
+        feature_importance = pd.DataFrame({
+            'Feature': self.feature_names,
+            'Coefficient': self.model.coef_
+        })
+        axes[1, 0].bar(feature_importance['Feature'], feature_importance['Coefficient'])
+        axes[1, 0].set_title('Feature Coefficients')
+        axes[1, 0].set_ylabel('Coefficient Value')
+        axes[1, 0].tick_params(axis='x', rotation=45)
+        
+        # 4. Price distribution
+        axes[1, 1].hist(self.train_data['price'], bins=30, alpha=0.7, color='purple')
+        axes[1, 1].set_xlabel('Price')
+        axes[1, 1].set_ylabel('Frequency')
+        axes[1, 1].set_title('Price Distribution')
+        axes[1, 1].ticklabel_format(style='plain', axis='x')
+        
+        plt.tight_layout()
+        plt.show()
+        
+    def correlation_analysis(self):
+        """Analyze correlations between features and price"""
+        if not self.is_trained:
+            print("Model not trained yet!")
+            return
+        
+        # Correlation matrix
+        correlation_matrix = self.train_data.corr()
+        
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0,
+                   square=True, linewidths=0.5)
+        plt.title('Feature Correlation Matrix')
+        plt.tight_layout()
+        plt.show()
+        
+        print("\nCORRELATION WITH PRICE:")
+        price_correlations = correlation_matrix['price'].sort_values(ascending=False)
+        for feature, corr in price_correlations.items():
+            if feature != 'price':
+                print(f"{feature.capitalize()}: {corr:.3f}")
 
-  // Calculate model metrics
-  const calculateMetrics = (actual, predicted) => {
-    const n = actual.length;
+def main():
+    """Main execution function"""
+    print("🏠 HOUSE PRICE PREDICTION MODEL")
+    print("="*50)
     
-    // Mean Squared Error
-    const mse = actual.reduce((sum, val, i) => 
-      sum + Math.pow(val - predicted[i], 2), 0) / n;
+    # Initialize predictor
+    predictor = HousePricePredictor()
     
-    // Root Mean Squared Error
-    const rmse = Math.sqrt(mse);
+    # Generate and display sample data
+    print("Generating synthetic house data...")
+    data = predictor.generate_synthetic_data(n_samples=1000)
     
-    // Mean Absolute Error
-    const mae = actual.reduce((sum, val, i) => 
-      sum + Math.abs(val - predicted[i]), 0) / n;
+    print(f"\nDataset Info:")
+    print(f"Total houses: {len(data)}")
+    print(f"Price range: ${data['price'].min():,} - ${data['price'].max():,}")
+    print(f"Sqft range: {data['sqft'].min()} - {data['sqft'].max()}")
     
-    // R-squared
-    const yMean = actual.reduce((sum, val) => sum + val, 0) / n;
-    const ssRes = actual.reduce((sum, val, i) => 
-      sum + Math.pow(val - predicted[i], 2), 0);
-    const ssTot = actual.reduce((sum, val) => 
-      sum + Math.pow(val - yMean, 2), 0);
-    const r2 = 1 - (ssRes / ssTot);
+    print("\nFirst 5 houses:")
+    print(data.head())
     
-    return { mse, rmse, mae, r2 };
-  };
-
-  // Train the model
-  const trainModel = () => {
-    if (data.length === 0) {
-      const sampleData = generateSampleData();
-      setData(sampleData);
-    }
+    print("\nDataset Statistics:")
+    print(data.describe())
     
-    const currentData = data.length > 0 ? data : generateSampleData();
+    # Train model
+    print(f"\nTraining linear regression model...")
+    predictor.train_model(data)
     
-    // Prepare features and target
-    const X = currentData.map(row => [row.sqft, row.bedrooms, row.bathrooms]);
-    const y = currentData.map(row => row.price);
+    # Evaluate model
+    metrics = predictor.evaluate_model()
     
-    // Split data (80% train, 20% test)
-    const splitIndex = Math.floor(currentData.length * 0.8);
-    const XTrain = X.slice(0, splitIndex);
-    const yTrain = y.slice(0, splitIndex);
-    const XTest = X.slice(splitIndex);
-    const yTest = y.slice(splitIndex);
+    # Make sample predictions
+    print("\n" + "="*50)
+    print("SAMPLE PREDICTIONS")
+    print("="*50)
     
-    // Train model
-    const lr = new LinearRegression();
-    lr.fit(XTrain, yTrain);
-    setModel(lr);
+    sample_houses = [
+        (1500, 3, 2),   # Small family home
+        (2500, 4, 3),   # Large family home  
+        (1200, 2, 1),   # Starter home
+        (3500, 5, 4),   # Luxury home
+    ]
     
-    // Make predictions
-    const yPred = lr.predict(XTest);
-    setPredictions(yPred);
+    for sqft, bed, bath in sample_houses:
+        predictor.predict_price(sqft, bed, bath)
     
-    // Calculate metrics
-    const modelMetrics = calculateMetrics(yTest, yPred);
-    setMetrics(modelMetrics);
+    # Visualizations
+    print(f"\nGenerating visualizations...")
+    predictor.plot_results()
+    predictor.correlation_analysis()
     
-    // Update data if it was generated
-    if (data.length === 0) {
-      setData(currentData);
-    }
-  };
-
-  // Make single prediction
-  const makePrediction = () => {
-    if (!model) return;
-    
-    const features = [[inputFeatures.sqft, inputFeatures.bedrooms, inputFeatures.bathrooms]];
-    const result = model.predict(features);
-    setPrediction(result[0]);
-  };
-
-  // Prepare chart data
-  const chartData = data.slice(0, 50).map((item, index) => ({
-    index: index + 1,
-    actual: item.price,
-    predicted: predictions[index] || null
-  }));
-
-  const scatterData = data.slice(0, 100).map(item => ({
-    sqft: item.sqft,
-    price: item.price
-  }));
-
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-white mb-4 flex items-center justify-center gap-3">
-            <Home className="text-blue-300" />
-            House Price Predictor
-          </h1>
-          <p className="text-xl text-gray-300">Linear Regression Model for Kaggle House Prices Dataset</p>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Controls */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-              <Calculator className="text-green-300" />
-              Model Controls
-            </h2>
+    # Interactive prediction function
+    def interactive_prediction():
+        """Allow user to input custom house features"""
+        print("\n" + "="*50)
+        print("INTERACTIVE PREDICTION")
+        print("="*50)
+        
+        try:
+            sqft = int(input("Enter square footage: "))
+            bedrooms = int(input("Enter number of bedrooms: "))
+            bathrooms = int(input("Enter number of bathrooms: "))
             
-            <button 
-              onClick={trainModel}
-              className="w-full bg-gradient-to-r from-blue-500 to-purple-600 text-white py-3 px-6 rounded-xl font-semibold hover:from-blue-600 hover:to-purple-700 transition-all flex items-center justify-center gap-2 mb-6"
-            >
-              <Play size={20} />
-              {model ? 'Retrain Model' : 'Train Model'}
-            </button>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-white mb-2">Square Footage:</label>
-                <input
-                  type="number"
-                  value={inputFeatures.sqft}
-                  onChange={(e) => setInputFeatures({...inputFeatures, sqft: parseInt(e.target.value)})}
-                  className="w-full p-3 rounded-lg bg-white/20 text-white placeholder-white/60 border border-white/30"
-                  placeholder="2000"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-white mb-2">Bedrooms:</label>
-                <input
-                  type="number"
-                  value={inputFeatures.bedrooms}
-                  onChange={(e) => setInputFeatures({...inputFeatures, bedrooms: parseInt(e.target.value)})}
-                  className="w-full p-3 rounded-lg bg-white/20 text-white placeholder-white/60 border border-white/30"
-                  placeholder="3"
-                />
-              </div>
-              
-              <div>
-                <label className="block text-white mb-2">Bathrooms:</label>
-                <input
-                  type="number"
-                  value={inputFeatures.bathrooms}
-                  onChange={(e) => setInputFeatures({...inputFeatures, bathrooms: parseInt(e.target.value)})}
-                  className="w-full p-3 rounded-lg bg-white/20 text-white placeholder-white/60 border border-white/30"
-                  placeholder="2"
-                />
-              </div>
-              
-              <button 
-                onClick={makePrediction}
-                disabled={!model}
-                className="w-full bg-gradient-to-r from-green-500 to-teal-600 text-white py-3 px-6 rounded-xl font-semibold hover:from-green-600 hover:to-teal-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Predict Price
-              </button>
-              
-              {prediction && (
-                <div className="bg-gradient-to-r from-green-500/20 to-teal-500/20 p-4 rounded-xl border border-green-300/30">
-                  <p className="text-white text-lg font-semibold">
-                    Predicted Price: ${prediction.toLocaleString()}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Model Performance */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
-              <BarChart3 className="text-yellow-300" />
-              Model Performance
-            </h2>
+            predicted_price = predictor.predict_price(sqft, bedrooms, bathrooms)
             
-            {metrics ? (
-              <div className="space-y-4">
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">R² Score</p>
-                  <p className="text-2xl font-bold text-white">{metrics.r2.toFixed(4)}</p>
-                </div>
-                
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">RMSE</p>
-                  <p className="text-xl font-bold text-white">${metrics.rmse.toLocaleString()}</p>
-                </div>
-                
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">MAE</p>
-                  <p className="text-xl font-bold text-white">${metrics.mae.toLocaleString()}</p>
-                </div>
-                
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">MSE</p>
-                  <p className="text-xl font-bold text-white">{metrics.mse.toLocaleString()}</p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-gray-400 text-center py-8">Train the model to see performance metrics</p>
-            )}
-          </div>
-
-          {/* Model Coefficients */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h2 className="text-2xl font-bold text-white mb-4">Model Coefficients</h2>
+            # Confidence interval (rough estimate)
+            test_pred = predictor.model.predict(predictor.X_test)
+            rmse = np.sqrt(mean_squared_error(predictor.y_test, test_pred))
             
-            {model ? (
-              <div className="space-y-4">
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">Intercept (Bias)</p>
-                  <p className="text-xl font-bold text-white">${model.bias.toLocaleString()}</p>
-                </div>
-                
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">Square Footage</p>
-                  <p className="text-xl font-bold text-white">${model.weights[0].toFixed(2)}/sqft</p>
-                </div>
-                
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">Bedrooms</p>
-                  <p className="text-xl font-bold text-white">${model.weights[1].toLocaleString()}</p>
-                </div>
-                
-                <div className="bg-white/10 p-4 rounded-xl">
-                  <p className="text-gray-300">Bathrooms</p>
-                  <p className="text-xl font-bold text-white">${model.weights[2].toLocaleString()}</p>
-                </div>
-              </div>
-            ) : (
-              <p className="text-gray-400 text-center py-8">Train the model to see coefficients</p>
-            )}
-          </div>
-        </div>
+            print(f"Confidence interval (±1 RMSE): ${predicted_price-rmse:,.0f} - ${predicted_price+rmse:,.0f}")
+            
+        except ValueError:
+            print("Please enter valid numbers!")
+        except KeyboardInterrupt:
+            print("\nExiting...")
+    
+    # Uncomment the line below to enable interactive predictions
+    # interactive_prediction()
+    
+    return predictor, data, metrics
 
-        {/* Visualizations */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Predictions vs Actual */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Actual vs Predicted Prices</h3>
-            {chartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
-                  <XAxis dataKey="index" stroke="#ffffff60" />
-                  <YAxis stroke="#ffffff60" />
-                  <Tooltip 
-                    contentStyle={{
-                      backgroundColor: '#1f2937',
-                      border: 'none',
-                      borderRadius: '8px',
-                      color: '#ffffff'
-                    }}
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="actual" 
-                    stroke="#3b82f6" 
-                    strokeWidth={2}
-                    name="Actual Price"
-                  />
-                  <Line 
-                    type="monotone" 
-                    dataKey="predicted" 
-                    stroke="#10b981" 
-                    strokeWidth={2}
-                    name="Predicted Price"
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-gray-400 text-center py-16">Train the model to see predictions</p>
-            )}
-          </div>
-
-          {/* Square Footage vs Price Scatter */}
-          <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Square Footage vs Price</h3>
-            {scatterData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <ScatterChart data={scatterData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#ffffff20" />
-                  <XAxis 
-                    dataKey="sqft" 
-                    stroke="#ffffff60" 
-                    name="Square Footage"
-                  />
-                  <YAxis 
-                    dataKey="price" 
-                    stroke="#ffffff60"
-                    name="Price"
-                  />
-                  <Tooltip 
-                    contentStyle={{
-                      backgroundColor: '#1f2937',
-                      border: 'none',
-                      borderRadius: '8px',
-                      color: '#ffffff'
-                    }}
-                    formatter={(value, name) => [
-                      name === 'price' ? `$${value.toLocaleString()}` : value,
-                      name === 'price' ? 'Price' : 'Sq Ft'
-                    ]}
-                  />
-                  <Scatter 
-                    dataKey="price" 
-                    fill="#8b5cf6" 
-                    fillOpacity={0.7}
-                  />
-                </ScatterChart>
-              </ResponsiveContainer>
-            ) : (
-              <p className="text-gray-400 text-center py-16">Load data to see scatter plot</p>
-            )}
-          </div>
-        </div>
-
-        {/* Data Table */}
-        {data.length > 0 && (
-          <div className="mt-6 bg-white/10 backdrop-blur-lg rounded-2xl p-6 border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">Sample Data (First 10 Records)</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-white">
-                <thead>
-                  <tr className="border-b border-white/20">
-                    <th className="text-left p-3">ID</th>
-                    <th className="text-left p-3">Sq Ft</th>
-                    <th className="text-left p-3">Bedrooms</th>
-                    <th className="text-left p-3">Bathrooms</th>
-                    <th className="text-left p-3">Price</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.slice(0, 10).map((row) => (
-                    <tr key={row.id} className="border-b border-white/10">
-                      <td className="p-3">{row.id}</td>
-                      <td className="p-3">{row.sqft.toLocaleString()}</td>
-                      <td className="p-3">{row.bedrooms}</td>
-                      <td className="p-3">{row.bathrooms}</td>
-                      <td className="p-3">${row.price.toLocaleString()}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-export default HousePricePredictor;
+# Example usage
+if _name_ == "_main_":
+    predictor, data, metrics = main()
+    
+    # Additional analysis
+    print(f"\n" + "="*50)
+    print("ADDITIONAL INSIGHTS")
+    print("="*50)
+    
+    # Price per sqft analysis
+    data['price_per_sqft'] = data['price'] / data['sqft']
+    print(f"Average price per sqft: ${data['price_per_sqft'].mean():.2f}")
+    print(f"Price per sqft range: ${data['price_per_sqft'].min():.2f} - ${data['price_per_sqft'].max():.2f}")
+    
+    # Feature importance interpretation
+    print(f"\nFeature Impact on Price:")
+    print(f"• Each additional sqft adds: ${predictor.model.coef_[0]:.2f}")
+    print(f"• Each additional bedroom adds: ${predictor.model.coef_[1]:,.0f}")
+    print(f"• Each additional bathroom adds: ${predictor.model.coef_[2]:,.0f}")
+    
+    print(f"\nModel Equation:")
+    print(f"Price = {predictor.model.intercept_:,.0f} + {predictor.model.coef_[0]:.2f}×sqft + {predictor.model.coef_[1]:,.0f}×bedrooms + {predictor.model.coef_[2]:,.0f}×bathrooms")
